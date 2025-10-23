@@ -1,6 +1,6 @@
 # uber_case_dashboard.py
-# Simple Uber (NCR) case-study dashboard
-# Minimal, readable, Uber-specific tabs (Overview, Rides, Cancellations, Revenue & Payments, Drivers/Customers)
+# Streamlit Uber (NCR) Case Study Dashboard – Polished & Enhanced Version
+# Shows clean EDA insights + metrics + visuals + downloadable dataset.
 
 import streamlit as st
 import pandas as pd
@@ -10,37 +10,32 @@ import seaborn as sns
 import io
 import matplotlib.colors as mcolors
 
-st.set_page_config(page_title="Uber (NCR) Case Dashboard", layout="wide")
+st.set_page_config(page_title="Uber NCR Case Dashboard", layout="wide")
 sns.set_style("whitegrid")
 
 # -------------------------
-# Helpers: reading & preprocessing (kept minimal)
+# Helpers: reading & preprocessing
 # -------------------------
-@st.cache_data #caches the returned data stores and when on purpose gives the result if the alr existed called 
+@st.cache_data
 def read_csv_bytes(uploaded_bytes):
-    # robust reading that accepts bytes from uploader
+    """Safely read uploaded CSV file."""
     try:
-        return pd.read_csv(io.BytesIO(uploaded_bytes), low_memory=False)#low_memory=false meaning that the pandas read entire file into memory at once so it can determine the datatypes for each col more accurate
+        return pd.read_csv(io.BytesIO(uploaded_bytes), low_memory=False)
     except Exception:
-        return pd.read_csv(io.BytesIO(uploaded_bytes), encoding="latin-1", low_memory=False)#latin-1 means the char encoding used in the writing or reading in the context of file operations
+        return pd.read_csv(io.BytesIO(uploaded_bytes), encoding="latin-1", low_memory=False)
 
 def preprocess(df):
     """Clean and create minimal features used across tabs."""
     df = df.copy()
-
-    # trim column names
     df.columns = [c.strip() for c in df.columns]
 
-    # Normalise expected column names (if lower-case present)
-    # We'll handle both 'Date' and 'date' etc.
-    if "date" in df.columns and "Date" not in df.columns:
-        df.rename(columns={"date": "Date"}, inplace=True)
-    if "time" in df.columns and "Time" not in df.columns:
-        df.rename(columns={"time": "Time"}, inplace=True)
-    if "booking value" in df.columns and "Booking Value" not in df.columns:
-        df.rename(columns={"booking value": "Booking Value"}, inplace=True)
+    # Normalize column names
+    renames = {"date": "Date", "time": "Time", "booking value": "Booking Value"}
+    for old, new in renames.items():
+        if old in df.columns and new not in df.columns:
+            df.rename(columns={old: new}, inplace=True)
 
-    # Parse date/time (safe)
+    # Parse datetime
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     if "Time" in df.columns:
@@ -48,21 +43,16 @@ def preprocess(df):
         if not t.isna().all():
             df["Hour"] = t.dt.hour
         else:
-            # Try extract hour from text like "14:30"
-            try:
-                df["Hour"] = df["Time"].astype(str).str.extract(r'(\d{1,2})(?::\d{2})?')[0].astype(float).astype("Int64")
-            except Exception:
-                df["Hour"] = pd.NA
+            df["Hour"] = df["Time"].astype(str).str.extract(r'(\d{1,2})(?::\d{2})?')[0].astype(float)
 
-    # Numeric casts
-    for col in ["Booking Value", "Ride Distance", "Driver Ratings", "Customer Rating",
-                "Cancelled Rides by Customer", "Cancelled Rides by Driver", "Incomplete Rides"]:
+    # Convert numeric
+    num_cols = [
+        "Booking Value", "Ride Distance", "Driver Ratings", "Customer Rating",
+        "Cancelled Rides by Customer", "Cancelled Rides by Driver", "Incomplete Rides"
+    ]
+    for col in num_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Fill simple medians for numeric columns where appropriate (keeps label simple)
-    for col in ["Driver Ratings", "Customer Rating", "Booking Value", "Ride Distance"]:
-        if col in df.columns:
             df[col] = df[col].fillna(df[col].median())
 
     # Feature engineering
@@ -70,41 +60,39 @@ def preprocess(df):
         df["Day"] = df["Date"].dt.date
         df["DayOfWeek"] = df["Date"].dt.day_name()
         df["Month"] = df["Date"].dt.to_period("M").astype(str)
-    if ("Pickup Location" in df.columns) and ("Drop Location" in df.columns):
+    if {"Pickup Location", "Drop Location"} <= set(df.columns):
         df["Route"] = df["Pickup Location"].fillna("Unknown") + " → " + df["Drop Location"].fillna("Unknown")
 
     # Normalize Booking Status
     if "Booking Status" in df.columns:
         df["Booking Status"] = df["Booking Status"].astype(str).str.title().replace({"Canceled": "Cancelled"})
-        df["Is_Completed"] = (df["Booking Status"] == "Completed")
-        df["Is_Cancelled"] = (df["Booking Status"] == "Cancelled")
-        df["Is_Incomplete"] = (df["Booking Status"] == "Incomplete")
+        df["Is_Completed"] = df["Booking Status"] == "Completed"
+        df["Is_Cancelled"] = df["Booking Status"] == "Cancelled"
+        df["Is_Incomplete"] = df["Booking Status"] == "Incomplete"
+
     return df
 
 # -------------------------
-# Plotting helpers (simple & consistent)
+# Plotting helpers
 # -------------------------
 def hex_colors_from_cmap(cmap_name, n):
     cmap = plt.cm.get_cmap(cmap_name)
     return [mcolors.to_hex(cmap(i / max(1, n-1))) for i in range(n)]
 
-def plot_countbar(series, title, rotation=0, ax=None):
+def plot_countbar(series, title, rotation=0):
     series = series.dropna()
     if series.empty:
         st.info("No data to plot.")
         return
     top = series.value_counts().head(20)
     colors = hex_colors_from_cmap("Paired", len(top))
-    fig = None
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(6,3))
+    fig, ax = plt.subplots(figsize=(6,3))
     top.plot(kind="bar", ax=ax, color=colors)
     ax.set_title(title, fontsize=11)
     ax.tick_params(axis="x", rotation=rotation, labelsize=9)
     ax.tick_params(axis="y", labelsize=9)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
-    if fig:
-        st.pyplot(fig)
+    st.pyplot(fig)
 
 def plot_line_dates(x, y, title, xlabel="", ylabel=""):
     if len(x)==0 or len(y)==0:
@@ -133,50 +121,41 @@ def plot_hist(series, title, bins=20):
 # -------------------------
 # App UI
 # -------------------------
-st.title("🚕 Uber (NCR) — Case Study Dashboard")
-st.markdown("Upload the `ncr_uber_ridebooking.csv` file (or similar Uber-format CSV). Dashboard is Uber-focused — good for interviews and portfolio.")
+st.title("🚕 Uber (NCR) – Case Study Dashboard")
+st.markdown("Upload the `ncr_uber_ridebooking.csv` file (or similar Uber-format CSV).")
 
 uploaded = st.file_uploader("Upload Uber CSV", type=["csv"])
 if uploaded is None:
-    st.info("Upload your CSV to start. Use the same column names as the dataset (e.g., Date, Time, Booking ID, Booking Status, Booking Value, Ride Distance, Vehicle Type, Pickup Location, Drop Location).")
+    st.info("Upload your CSV to start. Ensure columns like Date, Time, Booking Status, Booking Value, Ride Distance, etc.")
     st.stop()
 
-# read and preprocess
+# read & preprocess
 try:
     raw = read_csv_bytes(uploaded.read())
+    df = preprocess(raw)
 except Exception as e:
-    st.error("Could not read uploaded file: " + str(e))
+    st.error(f"Error reading file: {e}")
     st.stop()
 
-df = preprocess(raw)
-
 # -------------------------
-# Tabs: Overview, Rides, Cancellations, Revenue & Payments, Drivers & Customers
+# Tabs
 # -------------------------
 tab_overview, tab_rides, tab_cancel, tab_revenue, tab_people = st.tabs(
-    ["Overview", "Rides Overview", "Cancellations", "Revenue & Payments", "Drivers & Customers"]
+    ["Overview", "Ride Demand & Trends", "Cancellations", "Revenue & Payments", "Engagement Analysis"]
 )
 
 # -------------------------
 # Overview Tab
 # -------------------------
 with tab_overview:
-    st.header("Overview")
-    st.write("Quick dataset info and top-level KPIs.")
-
+    st.header("Overview Summary")
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
         st.metric("Rows", f"{df.shape[0]:,}")
         st.metric("Columns", f"{df.shape[1]}")
     with c2:
-        if "Customer ID" in df.columns:
-            st.metric("Unique Customers", f"{df['Customer ID'].nunique():,}")
-        else:
-            st.metric("Unique Customers", "N/A")
-        if "Booking ID" in df.columns:
-            st.metric("Unique Bookings", f"{df['Booking ID'].nunique():,}")
-        else:
-            st.metric("Unique Bookings", "N/A")
+        st.metric("Unique Customers", f"{df['Customer ID'].nunique():,}" if "Customer ID" in df else "N/A")
+        st.metric("Unique Bookings", f"{df['Booking ID'].nunique():,}" if "Booking ID" in df else "N/A")
     with c3:
         if "Booking Value" in df.columns:
             st.metric("Total Revenue", f"₹{df['Booking Value'].sum():,.0f}")
@@ -185,132 +164,134 @@ with tab_overview:
             st.metric("Total Revenue", "N/A")
             st.metric("Avg Booking Value", "N/A")
 
-    st.markdown("**Date range & sample preview**")
+    # Key Insights Section
+    st.subheader("📊 Key Insights")
+    insights = []
+    if "Booking ID" in df.columns:
+        insights.append(f"**{df['Booking ID'].nunique():,} total bookings** analyzed.")
+    if "Booking Value" in df.columns:
+        insights.append(f"**₹{df['Booking Value'].sum():,.0f} total revenue** generated.")
+    if "Is_Cancelled" in df.columns:
+        insights.append(f"**{df['Is_Cancelled'].mean()*100:.2f}% overall cancellation rate.**")
+    if "Hour" in df.columns:
+        hourly = df.groupby("Hour").size().reindex(range(24), fill_value=0)
+        top_hours = hourly.sort_values(ascending=False).head(3).index.tolist()
+        insights.append(f"Peak booking hours: **{', '.join(map(str, top_hours))} hrs**.")
+    st.markdown("- " + "\n- ".join(insights))
+
+    st.markdown("### Dataset Snapshot")
     if "Date" in df.columns:
         st.write(f"Date range: {df['Date'].min().date()} → {df['Date'].max().date()}")
     st.dataframe(df.head(6))
 
-    st.subheader("Missing values (top columns)")
-    mv = (df.isna().sum()).sort_values(ascending=False).head(10)
+    st.subheader("Missing Values (Top 10 Columns)")
+    mv = df.isna().sum().sort_values(ascending=False).head(10)
     st.table(mv.rename_axis("column").reset_index(name="missing_count"))
 
 # -------------------------
-# Rides Overview Tab
+# Ride Demand & Trends
 # -------------------------
 with tab_rides:
-    st.header("Rides Overview")
-    # Booking status distribution
+    st.header("Ride Demand & Time Trends")
     if "Booking Status" in df.columns:
         st.subheader("Booking Status Distribution")
         plot_countbar(df["Booking Status"], "Booking Status", rotation=20)
-    else:
-        st.info("No Booking Status column found.")
 
-    # Daily rides trend
     if "Date" in df.columns:
-        daily = df.groupby(df["Date"].dt.date).size().rename("count")
-        st.subheader("Daily Rides")
-        plot_line_dates(daily.index, daily.values, "Daily Rides", xlabel="Date", ylabel="Rides")
-    else:
-        st.info("No Date column found — cannot show time trends.")
+        daily = df.groupby(df["Date"].dt.date).size()
+        st.subheader("Daily Rides Trend")
+        plot_line_dates(daily.index, daily.values, "Daily Rides", "Date", "Rides")
 
-    # Hourly demand if Hour exists
     if "Hour" in df.columns:
-        st.subheader("Hourly demand (0–23)")
+        st.subheader("Hourly Demand Pattern")
         hourly = df.groupby("Hour").size().reindex(range(24), fill_value=0)
         fig, ax = plt.subplots(figsize=(9,2.5))
         ax.plot(hourly.index, hourly.values, marker='o', linewidth=1.6, color="#2ca02c")
         ax.set_title("Bookings by Hour")
-        ax.set_xlabel("Hour")
+        ax.set_xlabel("Hour of Day")
         ax.set_ylabel("Bookings")
         ax.grid(True, linestyle="--", alpha=0.4)
         st.pyplot(fig)
+        top3 = hourly.sort_values(ascending=False).head(3)
+        st.markdown(f"**Peak Hours:** {', '.join(map(str, top3.index))}")
 
 # -------------------------
-# Cancellations Tab
+# Cancellations
 # -------------------------
 with tab_cancel:
     st.header("Cancellations Analysis")
-
     if "Is_Cancelled" in df.columns:
-        rate = df["Is_Cancelled"].mean() * 100
-        st.metric("Overall cancellation rate", f"{rate:.2f}%")
-    else:
-        st.info("No Booking Status -> cannot compute cancellation rate.")
+        st.metric("Overall Cancellation Rate", f"{df['Is_Cancelled'].mean()*100:.2f}%")
 
-    # Customer-initiated cancellations column might be counts or flags; handle strings too
     if "Cancelled Rides by Customer" in df.columns:
+        st.subheader("Customer-Initiated Cancellations")
         col = df["Cancelled Rides by Customer"].astype(str).str.strip().str.lower()
-        # treat as positive cancellation if not "0" or not "nan"
-        is_cancelled_cust = (~col.isin(["0", "0.0", "nan", "none", "", "false"])) & col.notna()
-        st.write("Customer-initiated cancellation (% of rows):", f"{is_cancelled_cust.mean()*100:.2f}%")
-    if "Cancelled Rides by Driver" in df.columns:
-        col2 = df["Cancelled Rides by Driver"].astype(str).str.strip().str.lower()
-        is_cancelled_drv = (~col2.isin(["0", "0.0", "nan", "none", "", "false"])) & col2.notna()
-        st.write("Driver-initiated cancellation (% of rows):", f"{is_cancelled_drv.mean()*100:.2f}%")
+        cancelled_cust = (~col.isin(["0", "0.0", "nan", "none", "", "false"])) & col.notna()
+        st.write(f"Customer cancellations: **{cancelled_cust.mean()*100:.2f}%**")
 
-    # cancellation reasons (top)
+    if "Cancelled Rides by Driver" in df.columns:
+        st.subheader("Driver-Initiated Cancellations")
+        col2 = df["Cancelled Rides by Driver"].astype(str).str.strip().str.lower()
+        cancelled_drv = (~col2.isin(["0", "0.0", "nan", "none", "", "false"])) & col2.notna()
+        st.write(f"Driver cancellations: **{cancelled_drv.mean()*100:.2f}%**")
+
     if "Reason for cancelling by Customer" in df.columns:
-        st.subheader("Top customer cancellation reasons")
+        st.subheader("Top Customer Cancellation Reasons")
         plot_countbar(df["Reason for cancelling by Customer"], "Customer cancellation reasons", rotation=25)
+
     if "Driver Cancellation Reason" in df.columns:
-        st.subheader("Top driver cancellation reasons")
+        st.subheader("Top Driver Cancellation Reasons")
         plot_countbar(df["Driver Cancellation Reason"], "Driver cancellation reasons", rotation=25)
 
 # -------------------------
-# Revenue & Payments Tab
+# Revenue & Payments
 # -------------------------
 with tab_revenue:
     st.header("Revenue & Payment Insights")
     if "Booking Value" in df.columns:
-        st.subheader("Booking value distribution")
+        st.subheader("Booking Value Distribution")
         plot_hist(df["Booking Value"], "Booking Value distribution", bins=30)
 
-        st.subheader("Revenue trend (daily)")
+        st.subheader("Daily Revenue Trend")
         if "Date" in df.columns:
             rev_daily = df.groupby(df["Date"].dt.date)["Booking Value"].sum()
-            plot_line_dates(rev_daily.index, rev_daily.values, "Daily Revenue", xlabel="Date", ylabel="Revenue (₹)")
-    else:
-        st.info("No Booking Value column present.")
+            plot_line_dates(rev_daily.index, rev_daily.values, "Daily Revenue", "Date", "Revenue (₹)")
 
     if "Payment Method" in df.columns:
-        st.subheader("Payment Method mix")
+        st.subheader("Payment Method Mix")
         plot_countbar(df["Payment Method"], "Payment Method", rotation=25)
 
 # -------------------------
-# Drivers & Customers Tab
+# Engagement Analysis (Drivers & Customers)
 # -------------------------
 with tab_people:
-    st.header("Top Drivers & Customers (Activity)")
-    # top drivers
-    if "Driver Ratings" in df.columns and "Driver Ratings" in df.columns:
-        pass  # keep simple; show top counts instead
+    st.header("Engagement Analysis – Drivers & Customers")
 
     if "Customer ID" in df.columns:
-        st.subheader("Top 10 Customers by number of rides")
+        st.subheader("Top 10 Customers by Ride Count")
         top_cust = df["Customer ID"].value_counts().head(10)
         st.table(top_cust.rename_axis("Customer ID").reset_index(name="ride_count"))
 
     if "Driver ID" in df.columns:
-        st.subheader("Top 10 Drivers by number of rides")
+        st.subheader("Top 10 Drivers by Ride Count")
         top_drv = df["Driver ID"].value_counts().head(10)
         st.table(top_drv.rename_axis("Driver ID").reset_index(name="ride_count"))
 
-    # distances and value per km
     if "Ride Distance" in df.columns:
-        st.subheader("Avg ride distance")
-        st.write(f"{df['Ride Distance'].mean():.2f} km (mean) — {df['Ride Distance'].median():.2f} km (median)")
-    if "Value_per_km" in df.columns:
-        st.subheader("Value per km (median by vehicle)")
-        if "Vehicle Type" in df.columns:
-            vpkm = df.groupby("Vehicle Type")["Value_per_km"].median().sort_values(ascending=False)
-            st.table(vpkm.rename_axis("Vehicle Type").reset_index(name="median_value_per_km"))
+        st.subheader("Average Ride Distance")
+        st.write(f"Mean: {df['Ride Distance'].mean():.2f} km | Median: {df['Ride Distance'].median():.2f} km")
+
+    if st.checkbox("Show Correlation Heatmap (numerical columns)"):
+        num_cols = df.select_dtypes(include=[np.number])
+        fig, ax = plt.subplots(figsize=(6,4))
+        sns.heatmap(num_cols.corr(), annot=True, fmt=".2f", cmap="coolwarm", ax=ax)
+        st.pyplot(fig)
 
 # -------------------------
-# Export cleaned dataset (download)
+# Export cleaned dataset
 # -------------------------
 st.markdown("---")
 buf = io.BytesIO()
 df.to_csv(buf, index=False)
 buf.seek(0)
-st.download_button("Download cleaned / filtered CSV", data=buf, file_name="cleaned_ncr_uber.csv", mime="text/csv")
+st.download_button("⬇️ Download Cleaned Dataset", data=buf, file_name="cleaned_ncr_uber.csv", mime="text/csv")
