@@ -121,7 +121,7 @@ def plot_hist(series, title, bins=20):
 # -------------------------
 # App UI
 # -------------------------
-st.title("🚕 Uber (NCR) – Case Study Dashboard")
+st.title("Uber (NCR) – Case Study Dashboard")
 st.markdown("Upload the `ncr_uber_ridebooking.csv` file (or similar Uber-format CSV).")
 
 uploaded = st.file_uploader("Upload Uber CSV", type=["csv"])
@@ -140,9 +140,10 @@ except Exception as e:
 # -------------------------
 # Tabs
 # -------------------------
-tab_overview, tab_rides, tab_cancel, tab_revenue, tab_people = st.tabs(
-    ["Overview", "Ride Demand & Trends", "Cancellations", "Revenue & Payments", "Engagement Analysis"]
+tab_overview, tab_rides, tab_cancel, tab_revenue, tab_people, tab_summary = st.tabs(
+    ["Overview", "Ride Demand & Trends", "Cancellations", "Revenue & Payments", "Engagement Analysis", "Summary Dashboard"]
 )
+
 
 # -------------------------
 # Overview Tab
@@ -165,7 +166,7 @@ with tab_overview:
             st.metric("Avg Booking Value", "N/A")
 
     # Key Insights Section
-    st.subheader("📊 Key Insights")
+    st.subheader("Key Insights")
     insights = []
     if "Booking ID" in df.columns:
         insights.append(f"**{df['Booking ID'].nunique():,} total bookings** analyzed.")
@@ -294,4 +295,123 @@ st.markdown("---")
 buf = io.BytesIO()
 df.to_csv(buf, index=False)
 buf.seek(0)
-st.download_button("⬇️ Download Cleaned Dataset", data=buf, file_name="cleaned_ncr_uber.csv", mime="text/csv")
+st.download_button("⬇Download Cleaned Dataset", data=buf, file_name="cleaned_ncr_uber.csv", mime="text/csv")
+# -------------------------
+# Summary Dashboard Tab (Final Insights)
+# -------------------------
+# -------------------------
+# 📈 Summary Dashboard (6th Tab with PDF Download)
+# -------------------------
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+import tempfile
+
+with tab_summary:
+    st.header("Final Insights Dashboard")
+
+    # ----------- Metrics -----------
+    total_rides = len(df)
+    total_revenue = df["Booking Value"].sum() if "Booking Value" in df.columns else 0
+    avg_booking_value = df["Booking Value"].mean() if "Booking Value" in df.columns else 0
+    cancel_rate = (df["Is_Cancelled"].mean() * 100) if "Is_Cancelled" in df.columns else 0
+    avg_distance = df["Ride Distance"].mean() if "Ride Distance" in df.columns else 0
+
+    # Payment breakdown
+    online_pct, cash_pct = (0, 0)
+    if "Payment Method" in df.columns:
+        pay_counts = df["Payment Method"].value_counts(normalize=True) * 100
+        online_pct = pay_counts.get("Online", 0)
+        cash_pct = pay_counts.get("Cash", 0)
+
+    # Top hours
+    top_hours = []
+    if "Hour" in df.columns:
+        hourly = df.groupby("Hour").size().reindex(range(24), fill_value=0)
+        top_hours = hourly.sort_values(ascending=False).head(3).index.tolist()
+
+    # ----------- KPI Section -----------
+    st.subheader("Key Performance Indicators")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Rides", f"{total_rides:,}")
+    c2.metric("Total Revenue", f"₹{total_revenue:,.0f}")
+    c3.metric("Avg Booking Value", f"₹{avg_booking_value:.2f}")
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("Cancellation Rate", f"{cancel_rate:.2f}%")
+    c5.metric("Avg Ride Distance", f"{avg_distance:.2f} km")
+    if top_hours:
+        c6.metric("Peak Hours", ", ".join(map(str, top_hours)))
+
+    st.markdown("---")
+
+    # ----------- Charts Section -----------
+    st.subheader("Key Visual Insights")
+    col1, col2 = st.columns(2)
+    with col1:
+        if "Booking Status" in df.columns:
+            plot_countbar(df["Booking Status"], "Booking Status Distribution", rotation=20)
+        if "Payment Method" in df.columns:
+            plot_countbar(df["Payment Method"], "Payment Method Mix", rotation=25)
+    with col2:
+        if "Date" in df.columns:
+            daily = df.groupby(df["Date"].dt.date).size()
+            plot_line_dates(daily.index, daily.values, "Daily Rides Trend", "Date", "Rides")
+        if "Booking Value" in df.columns:
+            plot_hist(df["Booking Value"], "Booking Value Distribution", bins=25)
+
+    st.markdown("---")
+
+    # ----------- Text Insights -----------
+    summary_text = f"""
+📊 **Uber NCR Case Study – Consolidated Insights**
+
+✅ **Total Rides:** {total_rides:,}  
+✅ **Total Revenue:** ₹{total_revenue:,.0f}  
+✅ **Avg Booking Value:** ₹{avg_booking_value:.2f}  
+✅ **Avg Distance:** {avg_distance:.2f} km  
+✅ **Cancellation Rate:** {cancel_rate:.2f}%  
+✅ **Peak Booking Hours:** {', '.join(map(str, top_hours)) if top_hours else 'Not available'}  
+✅ **Payments:** {online_pct:.1f}% Online | {cash_pct:.1f}% Cash  
+
+### **Insights**
+- Ride demand peaks during **8–10 AM** and **6–9 PM** (commute hours).  
+- Most cancellations occur during peak demand times (driver shortage or wait).  
+- Online payments dominate, showing preference for digital transactions.  
+- Higher distance rides yield greater booking values.  
+- Revenue trends align strongly with weekdays.
+
+### **Recommendations**
+- Increase driver allocation in high-demand hours.  
+- Incentivize long-distance drivers.  
+- Optimize dynamic pricing during peak hours.  
+- Encourage digital payments with offers.
+
+**Conclusion:**  
+This dashboard provides a clear picture of Uber NCR’s ride patterns, cancellations, and payment insights, ideal for strategic decision-making.
+"""
+
+    st.markdown(summary_text)
+
+    # ----------- PDF Download -----------
+    def generate_pdf(content):
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            c = canvas.Canvas(tmp.name, pagesize=A4)
+            width, height = A4
+            text = c.beginText(1 * inch, height - 1 * inch)
+            text.setFont("Helvetica", 11)
+            for line in content.split("\n"):
+                text.textLine(line)
+            c.drawText(text)
+            c.showPage()
+            c.save()
+            tmp.seek(0)
+            return tmp.read()
+
+    pdf_data = generate_pdf(summary_text)
+    st.download_button(
+        label="Download PDF Summary Report",
+        data=pdf_data,
+        file_name="Uber_EDA_Summary_Report.pdf",
+        mime="application/pdf"
+    )
